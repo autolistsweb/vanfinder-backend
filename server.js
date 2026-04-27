@@ -258,6 +258,28 @@ app.get('/api/scan', async (req,res) => {
 app.get('/api/status', (req,res) => {
   res.json({ status:'online', lastScan, listingCount:store.length, version:'6.0.0' });
 });
+app.get('/api/debug', async (req,res) => {
+  const site = req.query.site || 'ebay';
+  const urls = {
+    ebay: 'https://www.ebay.co.uk/sch/i.html?_nkw=17+seat+minibus&_sacat=9858&_udhi=5000&_ipg=10',
+    autotrader: 'https://www.autotrader.co.uk/car-search?body-type=Minibus&maximum-seats=17&minimum-seats=17&postcode=BB9+7TZ&price-to=5000&sort=relevance',
+  };
+  const url = urls[site] || urls.ebay;
+  try {
+    const { data, status, headers } = await axios.get(url, { headers:HDRS, timeout:20000 });
+    res.json({
+      httpStatus: status,
+      contentLength: data.length,
+      containsSItem: data.includes('s-item__title'),
+      containsATListing: data.includes('car-details'),
+      containsPrice: data.includes('£'),
+      blockedOrCaptcha: data.includes('captcha') || data.includes('blocked') || data.includes('robot'),
+      sample: data.slice(0, 2000),
+    });
+  } catch(e) {
+    res.json({ error: e.message, httpStatus: e.response?.status, data: e.response?.data?.slice?.(0,500) });
+  }
+});
 app.get('/', (req,res) => {
   res.json({ service:'MiniBus Finder API v6', status:'running' });
 });
