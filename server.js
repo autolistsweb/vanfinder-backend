@@ -36,70 +36,61 @@ function portal(platform, title, url, seats) {
     foundAt:Date.now(), isDirect:true };
 }
 
-// ── AUTOTRADER ──────────────────────────────────────────────
+// ── AUTOTRADER via Jina AI (renders JS pages server-side, free) ──
 async function autotrader(postcode, maxPrice, minSeats, maxSeats) {
-  const pc  = postcode ? postcode.replace(/\s/g,'+') : 'LS1+1AB';
-  const url = 'https://www.autotrader.co.uk/car-search?body-type=Minibus' +
-              '&maximum-seats='+maxSeats+'&minimum-seats='+minSeats+
-              '&postcode='+pc+'&price-to='+maxPrice+'&radius=1500&sort=relevance';
-  console.log('[AT]', url);
+  const pc  = postcode ? postcode.replace(/\s/g,'+') : 'BB9+7TZ';
+  const atUrl = 'https://www.autotrader.co.uk/car-search?body-type=Minibus' +
+                '&maximum-seats='+maxSeats+'&minimum-seats='+minSeats+
+                '&postcode='+pc+'&price-to='+maxPrice+'&radius=1500&sort=relevance';
+  const jinaUrl = 'https://r.jina.ai/' + atUrl;
+  console.log('[AT via Jina]', jinaUrl);
   try {
-    const { data: html } = await axios.get(url, { headers:HDRS, timeout:25000 });
+    const { data: text } = await axios.get(jinaUrl, {
+      headers: {
+        'Accept': 'text/plain',
+        'X-Return-Format': 'text',
+        'User-Agent': 'Mozilla/5.0 (compatible; MiniBusFinder/1.0)',
+      },
+      timeout: 30000,
+    });
 
-    // Try Next.js JSON first
-    const jsonM = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-    if (jsonM) {
-      try {
-        const nd = JSON.parse(jsonM[1]);
-        const ads = nd?.props?.pageProps?.searchResults?.advertSummaries
-                 || nd?.props?.pageProps?.initialData?.search?.listings || [];
-        if (ads.length) {
-          const out = [];
-          for (const a of ads) {
-            const raw = String(a?.price?.advertisedPrice || a?.pricingInfo?.price || '0');
-            const price = parseInt(raw.replace(/[^0-9]/g,'')) || 0;
-            if (!price || price > maxPrice) continue;
-            const href = a?.href || a?.url || '/car-details/'+(a?.id||'');
-            out.push({
-              id: 'at_'+(a?.id||out.length), platform:'autotrader',
-              title: a?.heading || a?.title || 'Minibus',
-              price, year: String(a?.year||''),
-              mileage: String(a?.mileage?.mileage||'').replace(/[^0-9,]/g,''),
-              location: a?.sellerInfo?.town || '', seats: minSeats,
-              url: href.startsWith('http') ? href : 'https://www.autotrader.co.uk'+href,
-              imgUrl: a?.imageUrls?.[0] || a?.images?.[0]?.url || '',
-              age:'just found', foundAt:Date.now()
-            });
-          }
-          if (out.length) { console.log('[AT] JSON:', out.length); return out; }
-        }
-      } catch(e) {}
+    console.log('[AT] Jina response length:', text.length);
+
+    // Extract listing IDs (car-details URLs)
+    const ids = [...new Set([...text.matchAll(/car-details\/(\d{15,20})/g)].map(m=>m[1]))];
+    // Extract image URLs from atcdn CDN
+    const imgs = [...text.matchAll(/m\.atcdn\.co\.uk\/a\/media\/[^"'\s]+\/([a-f0-9]+)\.jpg/g)].map(m=>m[1]);
+    console.log('[AT] IDs:', ids.length, 'imgs:', imgs.length);
+
+    if (!ids.length) {
+      console.log('[AT] No IDs found, returning portal');
+      return [portal('autotrader','AutoTrader — tap to browse '+minSeats+'-seat minibuses under £'+maxPrice,atUrl,minSeats)];
     }
 
-    // Regex extraction fallback
-    const ids   = [...new Set([...html.matchAll(/\/car-details\/(\d{15,20})/g)].map(m=>m[1]))];
-    const imgs  = [...html.matchAll(/m\.atcdn\.co\.uk\/a\/media\/w\d+\/([a-f0-9]+)\.jpg/g)].map(m=>m[1]);
-    const text  = html.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ');
-    const chunks = text.split(/Save\s+advert/i);
-    console.log('[AT] IDs:'+ids.length+' imgs:'+imgs.length+' chunks:'+chunks.length);
-
+    // Split text into per-listing chunks
+    // Jina returns markdown — listings are separated by horizontal rules or headings
+    const chunks = text.split(/(?=\[.*?\]\(.*?car-details)/g);
     const out = [];
-    chunks.forEach((chunk, ci) => {
-      if (ci === 0 || ci > ids.length) return;
-      const id = ids[ci-1];
+
+    ids.forEach((id, idx) => {
+      // Find the chunk containing this listing ID
+      const chunk = chunks.find(c => c.includes(id)) || chunks[idx] || '';
+
       const pm = chunk.match(/£(\d{1,2},\d{3})/);
       const price = pm ? parseInt(pm[1].replace(',','')) : 0;
       if (!price || price > maxPrice) return;
+
       const ym = chunk.match(/\b(200[0-9]|201[0-9]|202[0-5])\b/);
-      const mm = chunk.match(/([\d,]+)\s+miles(?!\s*\))/i);
-      const lm = chunk.match(/([A-Za-z][A-Za-z\s]+?)\s*\(\d{2,3}\s+miles\)/);
-      const loc = lm ? lm[1].replace(/Dealer location|Private seller/gi,'').trim() : '';
-      const tm  = chunk.match(/right\d+\/\d+\s*((?:Ford|Mercedes|Volkswagen|Peugeot|Vauxhall|Renault|Iveco|Citroen|Toyota|Fiat)[^£\n]{5,60}?)(?:£|\d\.)/i);
-      const hi  = chunk.match(/(?:PSV|D1|class\s*5|section\s*19)[^\n]{0,80}/i);
-      const imgHash = imgs[(ci-1)*4] || imgs[ci-1] || '';
+      const mm = chunk.match(/([\d,]+)\s*miles(?!\s*\))/i);
+      const lm = chunk.match(/([A-Za-z][A-Za-z\s]+?)\s*\(\d{2,3}\s*miles\)/);
+      const loc = lm ? lm[1].replace(/Dealer|Private|location/gi,'').trim() : '';
+      const tm  = chunk.match(/(?:Ford|Mercedes|Volkswagen|Peugeot|Vauxhall|Renault|Iveco|Citroen|Toyota|Fiat)\s+\w+[^£\n]{0,60}/i);
+      const hi  = chunk.match(/(?:PSV|D1|class\s*5|Section\s*19)[^\n]{0,80}/i);
+      const imgHash = imgs[idx] || imgs[idx*2] || '';
+
       out.push({
         id:'at_'+id, platform:'autotrader',
-        title: tm ? tm[1].trim().replace(/\s+/g,' ') : 'Minibus',
+        title: tm ? tm[0].trim().replace(/\s+/g,' ').slice(0,80) : 'Minibus',
         price, year: ym?ym[1]:'', mileage: mm?mm[1]:'',
         location: loc, seats: minSeats,
         url: 'https://www.autotrader.co.uk/car-details/'+id,
@@ -108,49 +99,79 @@ async function autotrader(postcode, maxPrice, minSeats, maxSeats) {
         age:'just found', foundAt:Date.now()
       });
     });
-    console.log('[AT] Regex:', out.length);
+
+    console.log('[AT] Parsed:', out.length, 'real listings');
     if (out.length) return out;
-    return [portal('autotrader','AutoTrader — tap to browse '+minSeats+'-seat minibuses under £'+maxPrice,url,minSeats)];
+    return [portal('autotrader','AutoTrader — tap to browse '+minSeats+'-seat minibuses under £'+maxPrice,atUrl,minSeats)];
   } catch(e) {
     console.error('[AT]', e.message);
-    return [portal('autotrader','AutoTrader — tap to browse '+minSeats+'-seat minibuses under £'+maxPrice,url,minSeats)];
+    return [portal('autotrader','AutoTrader — tap to browse '+minSeats+'-seat minibuses under £'+maxPrice,atUrl,minSeats)];
   }
 }
 
-// ── EBAY ─────────────────────────────────────────────────────
+// ── EBAY via Jina AI ─────────────────────────────────────────
 async function ebay(maxPrice, minSeats, keyword) {
-  const q   = minSeats+' seat minibus'+(keyword?' '+keyword:'');
-  const url = 'https://www.ebay.co.uk/sch/i.html?_nkw='+encodeURIComponent(q)+
-              '&_sacat=9858&_udhi='+maxPrice+'&LH_ItemCondition=3000&LH_BIN=1&_sop=10&_ipg=60';
-  console.log('[eBay]', url);
+  const q      = minSeats+' seat minibus'+(keyword?' '+keyword:'');
+  const ebayUrl = 'https://www.ebay.co.uk/sch/i.html?_nkw='+encodeURIComponent(q)+
+                  '&_sacat=9858&_udhi='+maxPrice+'&LH_ItemCondition=3000&_ipg=60';
+  const jinaUrl = 'https://r.jina.ai/'+ebayUrl;
+  console.log('[eBay via Jina]', jinaUrl);
   try {
-    const { data } = await axios.get(url, { headers:HDRS, timeout:20000 });
-    const $ = cheerio.load(data);
+    const { data: text } = await axios.get(jinaUrl, {
+      headers: { 'Accept': 'text/plain', 'X-Return-Format': 'text', 'User-Agent': 'Mozilla/5.0 (compatible; MiniBusFinder/1.0)' },
+      timeout: 30000,
+    });
+    console.log('[eBay] Jina length:', text.length);
+
+    // Extract eBay item IDs from URLs
+    const ids = [...new Set([...text.matchAll(/\/itm\/(\d{12,15})/g)].map(m=>m[1]))];
+    const imgs = [...text.matchAll(/i\.ebayimg\.com\/[^"'\s]+\/s-l(\d+)\.jpg/g)];
+    console.log('[eBay] IDs:', ids.length);
+
+    if (!ids.length) {
+      return [portal('ebay','eBay Motors — tap to browse '+minSeats+'-seat minibuses under £'+maxPrice,ebayUrl,minSeats)];
+    }
+
+    // Split text into per-listing sections
+    const lines = text.split('\n');
     const out = [];
-    $('.s-item').each(function() {
-      const title = $(this).find('.s-item__title').text().trim();
-      if (!title || title.includes('Shop on eBay')) return;
-      if (!title.toLowerCase().match(/minibus|mini.?bus|\d+\s*seat/)) return;
-      const price = parseFloat($(this).find('.s-item__price').first().text().replace(/[^0-9.]/g,'')) || 0;
+    const seenIds = new Set();
+
+    ids.forEach((id) => {
+      if (seenIds.has(id)) return;
+      seenIds.add(id);
+
+      // Find lines around this listing ID
+      const idx = lines.findIndex(l => l.includes(id));
+      if (idx === -1) return;
+      const chunk = lines.slice(Math.max(0, idx-5), idx+10).join(' ');
+
+      const pm = chunk.match(/£(\d{1,2},\d{3})/);
+      const price = pm ? parseInt(pm[1].replace(',','')) : 0;
       if (!price || price > maxPrice) return;
-      const href  = $(this).find('a.s-item__link').attr('href') || '';
-      const img   = $(this).find('.s-item__image-img').attr('src') || '';
-      const loc   = $(this).find('.s-item__location').text().replace('Located in:','').trim();
-      const ym    = title.match(/\b(200[0-9]|201[0-9]|202[0-5])\b/);
+
+      const tm = chunk.match(/(?:Ford|Mercedes|Volkswagen|Peugeot|Vauxhall|Renault|Iveco)[^\n£]{5,80}/i);
+      const ym = chunk.match(/\b(200[0-9]|201[0-9]|202[0-5])\b/);
+      const lm = chunk.match(/(?:Located in:|location:)\s*([A-Za-z][A-Za-z\s,]+?)(?:\||$)/i);
+
       out.push({
-        id:'eb_'+(href.match(/itm\/(\d+)/)?.[1]||out.length), platform:'ebay',
-        title, price, year:ym?ym[1]:'', mileage:'', location:loc, seats:minSeats,
-        url:href.split('?')[0], imgUrl:img.replace(/s-l\d+/,'s-l500'),
+        id:'eb_'+id, platform:'ebay',
+        title: tm ? tm[0].trim().replace(/\s+/g,' ').slice(0,80) : q,
+        price, year: ym?ym[1]:'', mileage:'',
+        location: lm?lm[1].trim():'UK', seats:minSeats,
+        url: 'https://www.ebay.co.uk/itm/'+id,
+        imgUrl: '',
         age:'just found', foundAt:Date.now()
       });
     });
-    console.log('[eBay]', out.length);
+
+    console.log('[eBay] Parsed:', out.length);
     if (out.length) return out;
-    return [portal('ebay','eBay Motors — tap to browse '+minSeats+'-seat minibuses under £'+maxPrice,url,minSeats)];
+    return [portal('ebay','eBay Motors — tap to browse '+minSeats+'-seat minibuses under £'+maxPrice,ebayUrl,minSeats)];
   } catch(e) {
     console.error('[eBay]', e.message);
-    const fb = 'https://www.ebay.co.uk/sch/i.html?_nkw='+encodeURIComponent(minSeats+' seat minibus')+'&_sacat=9858&_udhi='+maxPrice+'&LH_ItemCondition=3000';
-    return [portal('ebay','eBay Motors — tap to browse',fb,minSeats)];
+    return [portal('ebay','eBay Motors — tap to browse',
+      'https://www.ebay.co.uk/sch/i.html?_nkw='+encodeURIComponent(minSeats+' seat minibus')+'&_sacat=9858&_udhi='+maxPrice,minSeats)];
   }
 }
 
