@@ -1,19 +1,20 @@
+
 {
-"name": "vanfinder-backend",
-"version": "1.0.0",
-"description": "MiniBus Finder scraper API",
-"main": "server.js",
-"scripts": {
-"start": "node server.js"
-},
-"dependencies": {
-"axios": "^1.7.2",
-"cheerio": "^1.0.0",
-"cors": "^2.8.5",
-"express": "^4.19.2",
-"node-cron": "^3.0.3"
-},
-"engines": {
-"node": ">=18.0.0"
-}
+  "name": "vanfinder-backend",
+  "version": "1.0.0",
+  "description": "MiniBus Finder scraper API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "cheerio": "^1.0.0-rc.12",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "node-cron": "^3.0.3"
+  },
+  "engines": {
+    "node": "20.x"
+  }
 }
